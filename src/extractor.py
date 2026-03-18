@@ -54,15 +54,26 @@ def extract_landmarks(base_path):
 
             if result.hand_landmarks:
                 for hand_landmarks in result.hand_landmarks:
-                    # --- INIZIO NORMALIZZAZIONE ---
-                    # Il polso è il primo elemento della lista (indice 0)
+                    # --- INIZIO NUOVA NORMALIZZAZIONE (TRASLAZIONE + SCALATURA) ---
+                    # 1. Traslazione: Il polso è l'indice 0
                     wrist = hand_landmarks[0]
                     
-                    row = []
+                    raw_coords = []
                     for lm in hand_landmarks:
-                        # Sottraiamo le coordinate del polso (x, y, z) da ogni punto
-                        row.extend([lm.x - wrist.x, lm.y - wrist.y, lm.z - wrist.z])
-                    # --- FINE NORMALIZZAZIONE ---
+                        # Calcoliamo le coordinate relative al polso
+                        raw_coords.extend([
+                            lm.x - wrist.x, 
+                            lm.y - wrist.y, 
+                            lm.z - wrist.z
+                        ])
+
+                    # 2. Scalatura: Troviamo il valore massimo assoluto in questa mano
+                    # Usiamo 1e-6 per evitare divisioni per zero se MediaPipe sbaglia
+                    max_val = max(max(map(abs, raw_coords)), 1e-6)
+                    
+                    # Dividiamo ogni coordinata per il valore massimo
+                    row = [val / max_val for val in raw_coords]
+                    # --- FINE NUOVA NORMALIZZAZIONE ---
                     
                     row.append(label)
                     data.append(row)

@@ -42,6 +42,6 @@ def train_lis_model(csv_path, model_output_path):
 
 if __name__ == "__main__":
     # Percorsi di default
-    CSV_INPUT = "./LIS-Translator-ML-Project/data/processed/lis_landmarks.csv"
-    MODEL_OUT = "./LIS-Translator-ML-Project//models/lis_model.pkl"
+    CSV_INPUT = "/content/LIS-Translator-ML-Project/data/processed/lis_landmarks.csv"
+    MODEL_OUT = "/content/LIS-Translator-ML-Project//models/lis_model.pkl"
     train_lis_model(CSV_INPUT, MODEL_OUT)
