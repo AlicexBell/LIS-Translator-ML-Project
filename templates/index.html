@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Traduttore LIS Live</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #0f0f0f;
+      color: #fff;
+      font-family: 'Segoe UI', sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      padding: 24px 16px;
+    }
+
+    h1 {
+      font-size: 1.6rem;
+      font-weight: 600;
+      margin-bottom: 20px;
+      letter-spacing: 0.04em;
+      color: #e0e0e0;
+    }
+
+    .container {
+      position: relative;
+      width: 640px;
+      max-width: 100%;
+    }
+
+    video, canvas {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      border-radius: 12px;
+    }
+
+    video { transform: scaleX(-1); }
+
+    /* canvas overlay per i landmark */
+    #overlay {
+      pointer-events: none;
+    }
+
+    .video-wrapper {
+      position: relative;
+      width: 640px;
+      max-width: 100%;
+      aspect-ratio: 4/3;
+      background: #1a1a1a;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 2px solid #2a2a2a;
+    }
+
+    .sign-box {
+      margin-top: 24px;
+      background: #1a1a1a;
+      border: 2px solid #333;
+      border-radius: 16px;
+      padding: 20px 40px;
+      text-align: center;
+      min-width: 220px;
+    }
+
+    .sign-label {
+      font-size: 0.85rem;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 8px;
+    }
+
+    .sign-value {
+      font-size: 4rem;
+      font-weight: 700;
+      color: #00e676;
+      line-height: 1;
+      transition: all 0.15s ease;
+    }
+
+    .sign-value.none {
+      color: #444;
+      font-size: 2rem;
+    }
+
+    .status {
+      margin-top: 14px;
+      font-size: 0.8rem;
+      color: #555;
+    }
+
+    .dot {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #00e676;
+      margin-right: 6px;
+      animation: pulse 1.2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.3; }
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Traduttore LIS Live</h1>
+
+  <div class="video-wrapper">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="overlay"></canvas>
+  </div>
+
+  <div class="sign-box">
+    <div class="sign-label">Segno rilevato</div>
+    <div class="sign-value none" id="sign-display">—</div>
+  </div>
+
+  <div class="status">
+    <span class="dot"></span>Analisi in corso...
+  </div>
+
+  <!-- Canvas nascosto per catturare il frame -->
+  <canvas id="capture" style="display:none"></canvas>
+
+  <script>
+    const video    = document.getElementById('video');
+    const overlay  = document.getElementById('overlay');
+    const capture  = document.getElementById('capture');
+    const signEl   = document.getElementById('sign-display');
+    const ctx      = overlay.getContext('2d');
+
+    // Connessioni scheletro mano MediaPipe (21 keypoint)
+    const CONNECTIONS = [
+      [0,1],[1,2],[2,3],[3,4],
+      [0,5],[5,6],[6,7],[7,8],
+      [0,9],[9,10],[10,11],[11,12],
+      [0,13],[13,14],[14,15],[15,16],
+      [0,17],[17,18],[18,19],[19,20],
+      [5,9],[9,13],[13,17]
+    ];
+
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 640, height: 480, facingMode: 'user' }
+        });
+        video.srcObject = stream;
+        video.addEventListener('loadedmetadata', () => {
+          overlay.width  = video.videoWidth;
+          overlay.height = video.videoHeight;
+          capture.width  = video.videoWidth;
+          capture.height = video.videoHeight;
+          loop();
+        });
+      } catch (e) {
+        signEl.textContent = 'CAM ERROR';
+        console.error(e);
+      }
+    }
+
+    let lastSend = 0;
+    const INTERVAL_MS = 150; // invia un frame ogni 150ms (~6fps al server)
+
+    function loop() {
+      requestAnimationFrame(loop);
+
+      const now = Date.now();
+      if (now - lastSend < INTERVAL_MS) return;
+      lastSend = now;
+
+      // Cattura frame originale (NON specchiato) — MediaPipe lavora sull'originale
+      const capCtx = capture.getContext('2d');
+      capCtx.drawImage(video, 0, 0, capture.width, capture.height);
+
+      const imageData = capture.toDataURL('image/jpeg', 0.7);
+
+      fetch('/predict', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: imageData })
+      })
+      .then(r => r.json())
+      .then(data => {
+        // Aggiorna segno
+        if (data.sign) {
+          signEl.textContent = data.sign;
+          signEl.classList.remove('none');
+        } else {
+          signEl.textContent = '—';
+          signEl.classList.add('none');
+        }
+
+        // Disegna landmark
+        ctx.clearRect(0, 0, overlay.width, overlay.height);
+        if (data.landmarks && data.landmarks.length > 0) {
+          const lms = data.landmarks;
+          const W = overlay.width;
+          const H = overlay.height;
+
+          // Specchia le x perché il video è specchiato
+          const pts = lms.map(lm => ({ x: (1 - lm.x) * W, y: lm.y * H }));
+
+          // Connessioni
+          ctx.strokeStyle = 'rgba(0, 230, 118, 0.6)';
+          ctx.lineWidth = 2;
+          for (const [a, b] of CONNECTIONS) {
+            ctx.beginPath();
+            ctx.moveTo(pts[a].x, pts[a].y);
+            ctx.lineTo(pts[b].x, pts[b].y);
+            ctx.stroke();
+          }
+
+          // Punti
+          for (const pt of pts) {
+            ctx.beginPath();
+            ctx.arc(pt.x, pt.y, 5, 0, Math.PI * 2);
+            ctx.fillStyle = '#00e676';
+            ctx.fill();
+          }
+        }
+      })
+      .catch(() => {});
+    }
+
+    startCamera();
+  </script>
+</body>
+</html>

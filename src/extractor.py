@@ -1,18 +1,25 @@
 import cv2
 import os
+import sys
 import pandas as pd
-import numpy as np
 import mediapipe as mp
 
+from pathlib import Path
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
+# Importa il modulo condiviso di feature
+sys.path.insert(0, str(Path(__file__).parent))
+from features import normalize_and_extract, augment_landmarks, mirror_landmarks, FEATURE_COLUMNS
+
+
 def extract_landmarks(base_path):
-    # Setup modello (Assicurati che hand_landmarker.task sia nella root del progetto)
-    model_path = "hand_landmarker.task"
+    # Risolvi il percorso di hand_landmarker.task rispetto alla root del progetto
+    root = Path(__file__).resolve().parent.parent
+    model_path = str(root / "hand_landmarker.task")
 
     if not os.path.exists(model_path):
-        print(f"❌ Errore: File {model_path} non trovato! Scaricalo con: !wget -q https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task")
+        print(f"❌ Errore: File {model_path} non trovato!")
         return None
 
     base_options = python.BaseOptions(model_asset_path=model_path)
@@ -49,44 +56,47 @@ def extract_landmarks(base_path):
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=img_rgb)
 
-            # Inference
             result = detector.detect(mp_image)
 
             if result.hand_landmarks:
                 for hand_landmarks in result.hand_landmarks:
-                    # --- INIZIO NUOVA NORMALIZZAZIONE (TRASLAZIONE + SCALATURA) ---
-                    # 1. Traslazione: Il polso è l'indice 0
-                    wrist = hand_landmarks[0]
-                    
-                    raw_coords = []
-                    for lm in hand_landmarks:
-                        # Calcoliamo le coordinate relative al polso
-                        raw_coords.extend([
-                            lm.x - wrist.x, 
-                            lm.y - wrist.y, 
-                            lm.z - wrist.z
-                        ])
+                    # Estrai 88 feature (63 raw + 25 geometriche)
+                    features = normalize_and_extract(hand_landmarks)
 
-                    # 2. Scalatura: Troviamo il valore massimo assoluto in questa mano
-                    # Usiamo 1e-6 per evitare divisioni per zero se MediaPipe sbaglia
-                    max_val = max(max(map(abs, raw_coords)), 1e-6)
-                    
-                    # Dividiamo ogni coordinata per il valore massimo
-                    row = [val / max_val for val in raw_coords]
-                    # --- FINE NUOVA NORMALIZZAZIONE ---
-                    
-                    row.append(label)
-                    data.append(row)
+                    # Campione originale
+                    data.append(features + [label])
                     count += 1
 
-        print(f"Fatto! ({count} immagini)")
+                    # Campione specchiato
+                    mirrored = mirror_landmarks(features)
+                    data.append(mirrored + [label])
+                    count += 1
+
+                    # 5 varianti augmentate dell'originale
+                    for aug in augment_landmarks(features, n_aug=5):
+                        data.append(aug + [label])
+                        count += 1
+
+        print(f"Fatto! ({count} campioni totali incluso augmentation)")
 
     if not data:
         return None
 
-    cols = []
-    for i in range(21):
-        cols.extend([f'x{i}', f'y{i}', f'z{i}'])
-    cols.append('target')
-
+    cols = FEATURE_COLUMNS + ['target']
     return pd.DataFrame(data, columns=cols)
+
+
+if __name__ == "__main__":
+    root = Path(__file__).resolve().parent.parent
+    dataset_path = str(root / "data" / "raw_images")
+
+    print(f"📂 Estrazione da: {dataset_path}")
+    df = extract_landmarks(dataset_path)
+
+    if df is not None:
+        out_path = root / "data" / "processed" / "lis_landmarks.csv"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(str(out_path), index=False)
+        print(f"✅ Salvato: {out_path}  ({df.shape[0]} righe × {df.shape[1]} colonne)")
+    else:
+        print("❌ Nessun dato estratto.")
