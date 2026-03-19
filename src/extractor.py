@@ -10,7 +10,7 @@ from mediapipe.tasks.python import vision
 
 # Importa il modulo condiviso di feature
 sys.path.insert(0, str(Path(__file__).parent))
-from features import normalize_and_extract, augment_landmarks, mirror_landmarks, FEATURE_COLUMNS
+from features import normalize_and_extract, FEATURE_COLUMNS
 
 
 def extract_landmarks(base_path):
@@ -61,23 +61,12 @@ def extract_landmarks(base_path):
             if result.hand_landmarks:
                 for hand_landmarks in result.hand_landmarks:
                     # Estrai 88 feature (63 raw + 25 geometriche)
+                    # NESSUNA augmentation qui — viene fatta in train_model.py solo sul training set
                     features = normalize_and_extract(hand_landmarks)
-
-                    # Campione originale
                     data.append(features + [label])
                     count += 1
 
-                    # Campione specchiato
-                    mirrored = mirror_landmarks(features)
-                    data.append(mirrored + [label])
-                    count += 1
-
-                    # 5 varianti augmentate dell'originale
-                    for aug in augment_landmarks(features, n_aug=5):
-                        data.append(aug + [label])
-                        count += 1
-
-        print(f"Fatto! ({count} campioni totali incluso augmentation)")
+        print(f"Fatto! ({count} campioni)")
 
     if not data:
         return None

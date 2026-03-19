@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 import joblib
 import os
 from pathlib import Path
@@ -7,26 +8,56 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, accuracy_score, ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
 
+import sys
+sys.path.insert(0, str(Path(__file__).parent))
+from features import augment_landmarks, mirror_landmarks
+
 
 def train_lis_model(csv_path, model_output_path):
-    # 1. Caricamento dati
+    # 1. Caricamento dati ORIGINALI (senza augmentation)
     if not os.path.exists(csv_path):
         print(f"❌ Errore: Il file {csv_path} non esiste!")
         return
 
     df = pd.read_csv(csv_path)
-    print(f"📊 Dataset caricato: {df.shape[0]} campioni, {df.shape[1]-1} feature.")
+    print(f"📊 Dataset originale: {df.shape[0]} campioni, {df.shape[1]-1} feature.")
 
-    # 2. Preparazione Feature (X) e Target (y)
     X = df.drop('target', axis=1)
     y = df['target']
 
-    # 3. Split Training e Test (80/20)
-    X_train, X_test, y_train, y_test = train_test_split(
+    # 2. Split PRIMA dell'augmentation — il test set è puro (solo campioni originali)
+    X_train_orig, X_test, y_train_orig, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y
     )
+    print(f"   Train originale: {len(X_train_orig)} | Test (puro): {len(X_test)}")
 
-    # 4. Creazione Modello
+    # 3. Augmentation SOLO sul training set
+    print("⚙️  Augmentation del training set...")
+    aug_rows = []
+    aug_labels = []
+
+    for i in range(len(X_train_orig)):
+        coords = X_train_orig.iloc[i].tolist()
+        label  = y_train_orig.iloc[i]
+
+        # Copia specchiata
+        mirrored = mirror_landmarks(coords)
+        aug_rows.append(mirrored)
+        aug_labels.append(label)
+
+        # 5 varianti augmentate
+        for aug in augment_landmarks(coords, n_aug=5):
+            aug_rows.append(aug)
+            aug_labels.append(label)
+
+    X_aug = pd.DataFrame(aug_rows, columns=X_train_orig.columns)
+    y_aug = pd.Series(aug_labels)
+
+    X_train = pd.concat([X_train_orig, X_aug], ignore_index=True)
+    y_train  = pd.concat([y_train_orig, y_aug], ignore_index=True)
+    print(f"   Train dopo augmentation: {len(X_train)} campioni")
+
+    # 4. Addestramento
     print("🏋️‍♂️ Addestramento del Random Forest (300 alberi)...")
     clf = RandomForestClassifier(
         n_estimators=300,
@@ -37,10 +68,10 @@ def train_lis_model(csv_path, model_output_path):
     )
     clf.fit(X_train, y_train)
 
-    # 5. Valutazione
+    # 5. Valutazione sul test set PURO (campioni originali mai visti)
     y_pred = clf.predict(X_test)
     acc = accuracy_score(y_test, y_pred)
-    print(f"🎯 Accuratezza Modello: {acc * 100:.2f}%")
+    print(f"🎯 Accuratezza sul test set puro: {acc * 100:.2f}%")
     print("\n📝 Report di Classificazione:\n", classification_report(y_test, y_pred))
 
     # 6. Confusion matrix
@@ -53,10 +84,10 @@ def train_lis_model(csv_path, model_output_path):
     plt.close()
     print(f"📊 Confusion matrix salvata in: {cm_path}")
 
-    # 7. Salvataggio del modello
+    # 7. Salvataggio
     os.makedirs(os.path.dirname(model_output_path), exist_ok=True)
     joblib.dump(clf, model_output_path)
-    print(f"💾 Modello salvato con successo in: {model_output_path}")
+    print(f"💾 Modello salvato in: {model_output_path}")
 
 
 if __name__ == "__main__":
