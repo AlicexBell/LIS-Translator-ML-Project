@@ -3,6 +3,7 @@ from tensorflow import keras
 from tensorflow.keras import layers, models
 import argparse
 import os
+import json
 import matplotlib.pyplot as plt
 
 def train_cnn_model(data_dir, model_output_path, epochs=15):
@@ -45,6 +46,11 @@ def train_cnn_model(data_dir, model_output_path, epochs=15):
     class_names = train_dataset.class_names
     num_classes = len(class_names)
     print(f"INFO: Trovate {num_classes} classi: {class_names}")
+
+    # Ottimizzazione della pipeline di dati
+    print("INFO: Ottimizzazione della pipeline di caricamento dati...")
+    train_dataset = train_dataset.cache().prefetch(buffer_size=tf.data.AUTOTUNE)
+    validation_dataset = validation_dataset.cache().prefetch(buffer_size=tf.data.AUTOTUNE)
 
     # --- 2. Data Augmentation ---
     data_augmentation = keras.Sequential([
@@ -90,13 +96,20 @@ def train_cnn_model(data_dir, model_output_path, epochs=15):
     print("INFO: Addestramento completato.")
 
     # --- 5. Salvataggio Modello ---
-    # Assicurati che la cartella di output esista
-    output_dir = os.path.dirname(model_output_path)
-    if not os.path.exists(output_dir) and output_dir != '':
-        os.makedirs(output_dir)
-        
+    # Assicurati che l'estensione sia .keras invece di .h5
+    if not model_output_path.endswith('.keras'):
+        model_output_path = model_output_path.replace('.h5', '.keras')
+        if not model_output_path.endswith('.keras'):
+            model_output_path += '.keras'
+
     model.save(model_output_path)
     print(f"✅ Modello salvato con successo in: {model_output_path}")
+
+    # Salva anche i nomi delle classi per uso futuro nell'applicazione
+    class_names_path = os.path.join(os.path.dirname(model_output_path), 'class_names.json')
+    with open(class_names_path, 'w') as f:
+        json.dump(class_names, f)
+    print(f"INFO: Nomi delle classi salvati in: {class_names_path}")
 
     # --- 6. (Opzionale) Salvataggio Grafico Performance ---
     try:
